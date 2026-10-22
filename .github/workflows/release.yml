@@ -1,0 +1,46 @@
+# Publishes ShimmerLabview/ as a zip on a GitHub release, one release for each ShimmerAPI version
+# the wrapper is built on (DEV-1299). It runs when the pin in ShimmerLabviewC#Wrapper/packages.config
+# changes on main, which is what merging an Update ShimmerAPI pull request does. Run it by hand
+# (Actions > Release > Run workflow) to publish the current version, if it has no release yet.
+#
+# The tag is shimmerapi-v<version>, for the ShimmerAPI version: the wrapper has no version of its own.
+
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'ShimmerLabviewC#Wrapper/packages.config' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/.*id="ShimmerAPI" version="\([0-9.]*\)".*/\1/p' 'ShimmerLabviewC#Wrapper/packages.config')
+          if [ -z "$version" ]; then
+            echo "::error::packages.config pins no ShimmerAPI version"
+            exit 1
+          fi
+          tag="shimmerapi-v$version"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "::notice::$tag is already released"
+            exit 0
+          fi
+          zip="ShimmerLabview-ShimmerAPI-$version.zip"
+          git archive --format=zip --prefix=ShimmerLabview/ -o "$zip" HEAD:ShimmerLabview
+          notes="The LabVIEW wrapper, built on ShimmerAPI $version. Unzip it and open ShimmerLabview/Examples/ShimmerLabview.lvproj; the VIs load the DLLs in ShimmerLabview/Bin/.
+
+          ShimmerAPI $version release notes: https://github.com/ShimmerResearch/Shimmer-C-API/releases/tag/v$version"
+          gh release create "$tag" "$zip" --target "$GITHUB_SHA" --title "LabVIEW wrapper for ShimmerAPI $version" --notes "$notes"
