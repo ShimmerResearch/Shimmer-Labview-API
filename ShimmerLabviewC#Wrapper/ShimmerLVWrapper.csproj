@@ -85,8 +85,8 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>libs\Shimmer32FeetAPI.dll</HintPath>
     </Reference>
-    <Reference Include="ShimmerAPI, Version=1.3.10.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>packages\ShimmerAPI.1.3.10\lib\netstandard2.0\ShimmerAPI.dll</HintPath>
+    <Reference Include="ShimmerAPI, Version=1.3.11.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>packages\ShimmerAPI.1.3.11\lib\netstandard2.0\ShimmerAPI.dll</HintPath>
     </Reference>
     <Reference Include="ShimmerClosedLibraryRev0_5, Version=0.4.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
