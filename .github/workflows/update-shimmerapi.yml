@@ -1,0 +1,109 @@
+# Keeps the LabVIEW wrapper on the newest ShimmerAPI release (DEV-1299).
+#
+# Every day, and from Actions > Update ShimmerAPI > Run workflow: if nuget.org has a newer stable
+# ShimmerAPI than ShimmerLabviewC#Wrapper/packages.config pins, moves the pin, rebuilds the wrapper,
+# refreshes ShimmerLabview/Bin/ and proposes the change as a pull request on a branch named
+# shimmerapi-<version>. Nothing reaches main until a person merges it, after trying the example VIs
+# on a Shimmer3 and a Shimmer3R: LabVIEW cannot run here. Merging it publishes a release (release.yml).
+#
+# The pull request is opened with this workflow's own token, which needs "Allow GitHub Actions to
+# create and approve pull requests" in Settings > Actions > General. Without it the branch is still
+# pushed, and the run's summary links the pull request to open by hand.
+#
+# Pull requests that touch the wrapper, Bin/ or this tooling build the wrapper, check Bin/ against
+# it, and try the next update without pushing anything.
+#
+# The work is in tools/Update-ShimmerApi.ps1, which runs the same way by hand.
+
+name: Update ShimmerAPI
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'ShimmerAPI version to move to, e.g. 1.4.0. Blank = the newest on nuget.org, if newer'
+        required: false
+        default: ''
+  pull_request:
+    paths:
+      - 'ShimmerLabviewC#Wrapper/**'
+      - 'ShimmerLabview/Bin/**'
+      - 'tools/Update-ShimmerApi.ps1'
+      - '.github/workflows/update-shimmerapi.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || 'update' }}
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the wrapper and check Bin/
+        shell: powershell
+        run: .\tools\Update-ShimmerApi.ps1 -Check
+      - name: Try the next update (nothing is pushed)
+        shell: powershell
+        run: .\tools\Update-ShimmerApi.ps1
+
+  update:
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Move to the ShimmerAPI release
+        id: update
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: .\tools\Update-ShimmerApi.ps1 -Version "$env:VERSION"
+      - name: Propose the update
+        if: steps.update.outputs.to != ''
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM: ${{ steps.update.outputs.from }}
+          TO: ${{ steps.update.outputs.to }}
+        run: |
+          $paths = 'ShimmerLabviewC#Wrapper/packages.config', 'ShimmerLabviewC#Wrapper/ShimmerLVWrapper.csproj', 'ShimmerLabview/Bin'
+          if (-not (git status --porcelain -- $paths)) {
+            Write-Host "Nothing changed."
+            exit 0
+          }
+          $branch = "shimmerapi-$env:TO"
+          git ls-remote --exit-code --heads origin $branch | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "::notice::Branch $branch already exists: an earlier run proposed this update."
+            exit 0
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c $branch
+          git add -- $paths
+          if ($env:FROM -eq $env:TO) { $title = "Rebuild the wrapper on ShimmerAPI $env:TO" } else { $title = "ShimmerAPI $env:FROM -> $env:TO" }
+          git commit -m $title
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          git push origin $branch
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $body = @(
+            "Moves the LabVIEW wrapper to ShimmerAPI $env:TO, rebuilt, with ShimmerLabview/Bin/ refreshed. Opened by the Update ShimmerAPI workflow."
+            ""
+            "- ShimmerAPI release notes: https://github.com/ShimmerResearch/Shimmer-C-API/releases/tag/v$env:TO"
+            "- Before merging, run the example VIs on a Shimmer3 and a Shimmer3R. LabVIEW cannot run in CI."
+            "- Merging publishes a release with ShimmerLabview/ as a zip."
+          ) -join "`n"
+          gh pr create --base main --head $branch --title $title --body $body
+          if ($LASTEXITCODE -ne 0) {
+            $compare = "${{ github.server_url }}/${{ github.repository }}/compare/main...$branch" + '?expand=1'
+            Write-Host "::warning::Pushed $branch, but this workflow may not open pull requests here. Open it by hand: $compare"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "Pushed **$branch**. Open its pull request by hand: $compare"
+          }
+          exit 0
